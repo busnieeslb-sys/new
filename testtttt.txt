@@ -1,0 +1,238 @@
+-- ===================================
+-- SENDIT DELIVERY SYSTEM DATABASE
+-- ===================================
+
+-- جدول المستخدمين الرئيسي
+CREATE TABLE users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone VARCHAR(20),
+    password VARCHAR(255) NOT NULL,
+    role ENUM('admin', 'merchant', 'driver') NOT NULL,
+    status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- جدول التجار
+CREATE TABLE merchants (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    company_name VARCHAR(150),
+    store_name VARCHAR(150),
+    address TEXT,
+    city VARCHAR(50),
+    zip_code VARCHAR(10),
+    business_type VARCHAR(50),
+    bank_account VARCHAR(50),
+    commission_rate DECIMAL(5,2) DEFAULT 0.00,
+    balance DECIMAL(10,2) DEFAULT 0.00,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- جدول السائقين
+CREATE TABLE drivers (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    vehicle_type VARCHAR(50),
+    vehicle_number VARCHAR(50),
+    license_number VARCHAR(50),
+    city VARCHAR(50),
+    zone VARCHAR(50),
+    status ENUM('available', 'busy', 'offline') DEFAULT 'offline',
+    rating DECIMAL(3,2) DEFAULT 0.00,
+    total_deliveries INT DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- جدول الطرود/الشحنات
+CREATE TABLE parcels (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    tracking_number VARCHAR(50) UNIQUE NOT NULL,
+    merchant_id INT NOT NULL,
+    driver_id INT,
+    
+    -- معلومات العميل
+    customer_name VARCHAR(100) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    customer_address TEXT NOT NULL,
+    customer_city VARCHAR(50) NOT NULL,
+    customer_zip VARCHAR(10),
+    
+    -- معلومات الشحنة
+    parcel_description TEXT,
+    weight DECIMAL(8,2),
+    cod_amount DECIMAL(10,2) DEFAULT 0.00, -- Cash on Delivery
+    delivery_fee DECIMAL(10,2) NOT NULL,
+    
+    -- الحالة
+    status ENUM(
+        'pending',           -- قيد الانتظار
+        'picked_up',         -- تم الاستلام
+        'in_transit',        -- في الطريق
+        'out_for_delivery',  -- خرج للتوصيل
+        'delivered',         -- تم التوصيل
+        'returned',          -- مرتجع
+        'cancelled',         -- ملغي
+        'failed'             -- فشل التوصيل
+    ) DEFAULT 'pending',
+    
+    -- التواريخ
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    picked_up_at TIMESTAMP NULL,
+    delivered_at TIMESTAMP NULL,
+    
+    -- ملاحظات
+    notes TEXT,
+    cancellation_reason TEXT,
+    
+    FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE,
+    FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL
+);
+
+-- جدول طلبات الاستلام (Ramassages)
+CREATE TABLE pickup_requests (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    merchant_id INT NOT NULL,
+    driver_id INT,
+    pickup_address TEXT NOT NULL,
+    pickup_city VARCHAR(50) NOT NULL,
+    pickup_date DATE NOT NULL,
+    pickup_time TIME,
+    number_of_parcels INT DEFAULT 0,
+    status ENUM('pending', 'assigned', 'picked_up', 'cancelled') DEFAULT 'pending',
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE,
+    FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL
+);
+
+-- جدول المدفوعات
+CREATE TABLE payments (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    merchant_id INT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    type ENUM('payout', 'refund', 'commission') NOT NULL,
+    status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
+    payment_method VARCHAR(50),
+    transaction_reference VARCHAR(100),
+    payment_date TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE
+);
+
+-- جدول تاريخ حالة الطرود
+CREATE TABLE parcel_status_history (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    parcel_id INT NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    location VARCHAR(100),
+    notes TEXT,
+    created_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (parcel_id) REFERENCES parcels(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- جدول المدن والمناطق
+CREATE TABLE cities (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    zone VARCHAR(50),
+    delivery_fee DECIMAL(10,2) NOT NULL,
+    active BOOLEAN DEFAULT TRUE
+);
+
+-- جدول الرسوم حسب الوزن
+CREATE TABLE weight_fees (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    min_weight DECIMAL(8,2) NOT NULL,
+    max_weight DECIMAL(8,2) NOT NULL,
+    additional_fee DECIMAL(10,2) NOT NULL
+);
+
+-- جدول التذاكر/الشكاوى
+CREATE TABLE tickets (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    parcel_id INT,
+    subject VARCHAR(200) NOT NULL,
+    message TEXT NOT NULL,
+    status ENUM('open', 'in_progress', 'closed') DEFAULT 'open',
+    priority ENUM('low', 'medium', 'high') DEFAULT 'medium',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (parcel_id) REFERENCES parcels(id) ON DELETE SET NULL
+);
+
+-- جدول ردود التذاكر
+CREATE TABLE ticket_replies (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    ticket_id INT NOT NULL,
+    user_id INT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- جدول الإشعارات
+CREATE TABLE notifications (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    message TEXT NOT NULL,
+    type VARCHAR(50),
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- جدول الإعدادات العامة
+CREATE TABLE settings (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    setting_key VARCHAR(100) UNIQUE NOT NULL,
+    setting_value TEXT,
+    description TEXT
+);
+
+-- ===================================
+-- INDEXES للأداء
+-- ===================================
+
+CREATE INDEX idx_parcels_tracking ON parcels(tracking_number);
+CREATE INDEX idx_parcels_merchant ON parcels(merchant_id);
+CREATE INDEX idx_parcels_status ON parcels(status);
+CREATE INDEX idx_parcels_created ON parcels(created_at);
+CREATE INDEX idx_payments_merchant ON payments(merchant_id);
+CREATE INDEX idx_notifications_user ON notifications(user_id, is_read);
+
+-- ===================================
+-- بيانات تجريبية للمدن المغربية
+-- ===================================
+
+INSERT INTO cities (name, zone, delivery_fee) VALUES
+('الدار البيضاء', 'Centre', 25.00),
+('الرباط', 'Centre', 25.00),
+('مراكش', 'Centre', 30.00),
+('فاس', 'Nord', 35.00),
+('طنجة', 'Nord', 40.00),
+('أغادير', 'Sud', 45.00),
+('مكناس', 'Nord', 35.00),
+('وجدة', 'Oriental', 50.00),
+('القنيطرة', 'Centre', 30.00),
+('تطوان', 'Nord', 40.00);
+
+-- ===================================
+-- بيانات الإعدادات
+-- ===================================
+
+INSERT INTO settings (setting_key, setting_value, description) VALUES
+('company_name', 'Sendit', 'اسم الشركة'),
+('commission_rate', '10', 'نسبة العمولة الافتراضية %'),
+('payment_cycle', '24', 'دورة الدفع بالساعات'),
+('cod_max_amount', '10000', 'الحد الأقصى للدفع عند الاستلام'),
+('free_return', '1', 'الإرجاع المجاني'),
+('whatsapp_api_key', '', 'مفتاح واتساب API');
