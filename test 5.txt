@@ -1,0 +1,370 @@
+const db = require('../config/database');
+
+// دالة لتوليد رقم تتبع فريد
+const generateTrackingNumber = () => {
+    const prefix = 'SND';
+    const timestamp = Date.now().toString().slice(-8);
+    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    return `${prefix}${timestamp}${random}`;
+};
+
+// إضافة طرد جديد
+exports.createParcel = async (req, res) => {
+    try {
+        const merchantId = req.user.merchantId;
+        const {
+            customer_name,
+            customer_phone,
+            customer_address,
+            customer_city,
+            customer_zip,
+            parcel_description,
+            weight,
+            cod_amount,
+            notes
+        } = req.body;
+
+        // التحقق من المدخلات
+        if (!customer_name || !customer_phone || !customer_address || !customer_city) {
+            return res.status(400).json({
+                success: false,
+                message: 'يرجى ملء جميع الحقول المطلوبة'
+            });
+        }
+
+        // الحصول على رسوم التوصيل حسب المدينة
+        const [cityData] = await db.query(
+            'SELECT delivery_fee FROM cities WHERE name = ? AND active = TRUE',
+            [customer_city]
+        );
+
+        if (cityData.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'المدينة غير متاحة للتوصيل'
+            });
+        }
+
+        let delivery_fee = cityData[0].delivery_fee;
+
+        // إضافة رسوم إضافية حسب الوزن إذا لزم الأمر
+        if (weight) {
+            const [weightFees] = await db.query(
+                'SELECT additional_fee FROM weight_fees WHERE ? BETWEEN min_weight AND max_weight',
+                [weight]
+            );
+            if (weightFees.length > 0) {
+                delivery_fee += weightFees[0].additional_fee;
+            }
+        }
+
+        // توليد رقم التتبع
+        const tracking_number = generateTrackingNumber();
+
+        // إدراج الطرد
+        const [result] = await db.query(`
+            INSERT INTO parcels (
+                tracking_number, merchant_id, customer_name, customer_phone,
+                customer_address, customer_city, customer_zip, parcel_description,
+                weight, cod_amount, delivery_fee, notes, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        `, [
+            tracking_number, merchantId, customer_name, customer_phone,
+            customer_address, customer_city, customer_zip, parcel_description,
+            weight, cod_amount, delivery_fee, notes
+        ]);
+
+        // إضافة سجل في تاريخ الحالة
+        await db.query(`
+            INSERT INTO parcel_status_history (parcel_id, status, notes, created_by)
+            VALUES (?, 'pending', 'تم إنشاء الطرد', ?)
+        `, [result.insertId, req.user.id]);
+
+        res.status(201).json({
+            success: true,
+            message: 'تم إضافة الطرد بنجاح',
+            data: {
+                id: result.insertId,
+                tracking_number
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في إضافة الطرد:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// الحصول على جميع الطرود للتاجر
+exports.getParcels = async (req, res) => {
+    try {
+        const merchantId = req.user.merchantId;
+        const { status, page = 1, limit = 20, search } = req.query;
+        const offset = (page - 1) * limit;
+
+        let whereClause = 'WHERE p.merchant_id = ?';
+        let queryParams = [merchantId];
+
+        // فلتر حسب الحالة
+        if (status && status !== 'all') {
+            whereClause += ' AND p.status = ?';
+            queryParams.push(status);
+        }
+
+        // البحث
+        if (search) {
+            whereClause += ' AND (p.tracking_number LIKE ? OR p.customer_name LIKE ? OR p.customer_phone LIKE ?)';
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        // الحصول على العدد الإجمالي
+        const [countResult] = await db.query(
+            `SELECT COUNT(*) as total FROM parcels p ${whereClause}`,
+            queryParams
+        );
+
+        // الحصول على البيانات
+        const [parcels] = await db.query(`
+            SELECT 
+                p.*,
+                d.name as driver_name,
+                u.phone as driver_phone
+            FROM parcels p
+            LEFT JOIN drivers dr ON p.driver_id = dr.id
+            LEFT JOIN users u ON dr.user_id = u.id
+            ${whereClause}
+            ORDER BY p.created_at DESC
+            LIMIT ? OFFSET ?
+        `, [...queryParams, parseInt(limit), offset]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                parcels,
+                pagination: {
+                    total: countResult[0].total,
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    totalPages: Math.ceil(countResult[0].total / limit)
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب الطرود:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// الحصول على تفاصيل طرد واحد
+exports.getParcelById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const merchantId = req.user.merchantId;
+
+        const [parcels] = await db.query(`
+            SELECT 
+                p.*,
+                d.name as driver_name,
+                u.phone as driver_phone,
+                u.email as driver_email
+            FROM parcels p
+            LEFT JOIN drivers dr ON p.driver_id = dr.id
+            LEFT JOIN users u ON dr.user_id = u.id
+            WHERE p.id = ? AND p.merchant_id = ?
+        `, [id, merchantId]);
+
+        if (parcels.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'الطرد غير موجود'
+            });
+        }
+
+        // الحصول على تاريخ الحالة
+        const [history] = await db.query(`
+            SELECT 
+                psh.*,
+                u.name as updated_by_name
+            FROM parcel_status_history psh
+            LEFT JOIN users u ON psh.created_by = u.id
+            WHERE psh.parcel_id = ?
+            ORDER BY psh.created_at DESC
+        `, [id]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                parcel: parcels[0],
+                history
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب تفاصيل الطرد:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// تحديث حالة الطرد
+exports.updateParcelStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, notes } = req.body;
+        const merchantId = req.user.merchantId;
+
+        // التحقق من أن الطرد يخص التاجر
+        const [parcels] = await db.query(
+            'SELECT * FROM parcels WHERE id = ? AND merchant_id = ?',
+            [id, merchantId]
+        );
+
+        if (parcels.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'الطرد غير موجود'
+            });
+        }
+
+        // تحديث الحالة
+        await db.query(
+            'UPDATE parcels SET status = ? WHERE id = ?',
+            [status, id]
+        );
+
+        // إضافة سجل في تاريخ الحالة
+        await db.query(`
+            INSERT INTO parcel_status_history (parcel_id, status, notes, created_by)
+            VALUES (?, ?, ?, ?)
+        `, [id, status, notes, req.user.id]);
+
+        res.status(200).json({
+            success: true,
+            message: 'تم تحديث حالة الطرد بنجاح'
+        });
+
+    } catch (error) {
+        console.error('خطأ في تحديث حالة الطرد:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// إلغاء طرد
+exports.cancelParcel = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { cancellation_reason } = req.body;
+        const merchantId = req.user.merchantId;
+
+        const [parcels] = await db.query(
+            'SELECT * FROM parcels WHERE id = ? AND merchant_id = ?',
+            [id, merchantId]
+        );
+
+        if (parcels.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'الطرد غير موجود'
+            });
+        }
+
+        const parcel = parcels[0];
+
+        if (parcel.status === 'delivered') {
+            return res.status(400).json({
+                success: false,
+                message: 'لا يمكن إلغاء طرد تم توصيله'
+            });
+        }
+
+        // تحديث الحالة إلى ملغي
+        await db.query(
+            'UPDATE parcels SET status = "cancelled", cancellation_reason = ? WHERE id = ?',
+            [cancellation_reason, id]
+        );
+
+        // إضافة سجل في تاريخ الحالة
+        await db.query(`
+            INSERT INTO parcel_status_history (parcel_id, status, notes, created_by)
+            VALUES (?, 'cancelled', ?, ?)
+        `, [id, cancellation_reason, req.user.id]);
+
+        res.status(200).json({
+            success: true,
+            message: 'تم إلغاء الطرد بنجاح'
+        });
+
+    } catch (error) {
+        console.error('خطأ في إلغاء الطرد:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// تتبع طرد (للعميل - بدون مصادقة)
+exports.trackParcel = async (req, res) => {
+    try {
+        const { tracking_number } = req.params;
+
+        const [parcels] = await db.query(`
+            SELECT 
+                p.tracking_number,
+                p.status,
+                p.customer_name,
+                p.customer_city,
+                p.created_at,
+                p.delivered_at
+            FROM parcels p
+            WHERE p.tracking_number = ?
+        `, [tracking_number]);
+
+        if (parcels.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'رقم التتبع غير صحيح'
+            });
+        }
+
+        // الحصول على تاريخ الحالة
+        const [history] = await db.query(`
+            SELECT 
+                status,
+                location,
+                notes,
+                created_at
+            FROM parcel_status_history
+            WHERE parcel_id = (SELECT id FROM parcels WHERE tracking_number = ?)
+            ORDER BY created_at ASC
+        `, [tracking_number]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                parcel: parcels[0],
+                history
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في تتبع الطرد:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};

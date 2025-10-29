@@ -1,0 +1,51 @@
+const jwt = require('jsonwebtoken');
+
+// Middleware للتحقق من التوكن
+exports.protect = async (req, res, next) => {
+    try {
+        let token;
+
+        // استخراج التوكن من الـ Headers
+        if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+            token = req.headers.authorization.split(' ')[1];
+        }
+
+        // التحقق من وجود التوكن
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'غير مصرح لك بالوصول إلى هذا المسار'
+            });
+        }
+
+        try {
+            // التحقق من صحة التوكن
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            req.user = decoded;
+            next();
+        } catch (err) {
+            return res.status(401).json({
+                success: false,
+                message: 'توكن غير صالح'
+            });
+        }
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// Middleware للتحقق من الصلاحيات
+exports.authorize = (...roles) => {
+    return (req, res, next) => {
+        if (!roles.includes(req.user.role)) {
+            return res.status(403).json({
+                success: false,
+                message: `صلاحية ${req.user.role} غير مسموح لها بالوصول إلى هذا المسار`
+            });
+        }
+        next();
+    };
+};

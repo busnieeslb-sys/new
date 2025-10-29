@@ -1,0 +1,185 @@
+const db = require('../config/database');
+
+// الحصول على إحصائيات Dashboard
+exports.getDashboardStats = async (req, res) => {
+    try {
+        const merchantId = req.user.merchantId;
+
+        // 1. إجمالي الطرود / المسلمة
+        const [parcelStats] = await db.query(`
+            SELECT 
+                COUNT(*) as total_parcels,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered_parcels,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_parcels,
+                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit_parcels,
+                SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned_parcels,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_parcels,
+                SUM(CASE WHEN status = 'out_for_delivery' THEN 1 ELSE 0 END) as out_for_delivery_parcels,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_parcels
+            FROM parcels 
+            WHERE merchant_id = ?
+        `, [merchantId]);
+
+        // 2. إجمالي طلبات الاستلام (Ramassages)
+        const [pickupStats] = await db.query(`
+            SELECT COUNT(*) as total_pickups
+            FROM pickup_requests
+            WHERE merchant_id = ?
+        `, [merchantId]);
+
+        // 3. إجمالي المبالغ المحصلة
+        const [amountStats] = await db.query(`
+            SELECT 
+                COALESCE(SUM(cod_amount), 0) as total_collected,
+                COALESCE(SUM(delivery_fee), 0) as total_fees
+            FROM parcels
+            WHERE merchant_id = ? AND status = 'delivered'
+        `, [merchantId]);
+
+        // 4. حالة الطرود للرسم البياني الدائري
+        const parcelStatusData = {
+            cancelled: parseInt(parcelStats[0].cancelled_parcels) || 0,
+            delivered: parseInt(parcelStats[0].delivered_parcels) || 0,
+            in_transit: parseInt(parcelStats[0].in_transit_parcels) || 0,
+            pending: parseInt(parcelStats[0].pending_parcels) || 0,
+            returned: parseInt(parcelStats[0].returned_parcels) || 0,
+            out_for_delivery: parseInt(parcelStats[0].out_for_delivery_parcels) || 0
+        };
+
+        // 5. إحصائيات الدفع
+        const [paymentStats] = await db.query(`
+            SELECT 
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) as paid_count,
+                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payment_count,
+                COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_count,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as total_paid
+            FROM payments
+            WHERE merchant_id = ?
+        `, [merchantId]);
+
+        // 6. رسم بياني للإيرادات الأسبوعية
+        const [weeklyRevenue] = await db.query(`
+            SELECT 
+                DATE(created_at) as date,
+                SUM(cod_amount) as revenue
+            FROM parcels
+            WHERE merchant_id = ? 
+                AND status = 'delivered'
+                AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `, [merchantId]);
+
+        // 7. رسم بياني لعدد الطرود الأسبوعية
+        const [weeklyParcels] = await db.query(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count
+            FROM parcels
+            WHERE merchant_id = ? 
+                AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `, [merchantId]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                overview: {
+                    total_parcels: parseInt(parcelStats[0].total_parcels) || 0,
+                    delivered_parcels: parseInt(parcelStats[0].delivered_parcels) || 0,
+                    total_pickups: parseInt(pickupStats[0].total_pickups) || 0,
+                    total_collected: parseFloat(amountStats[0].total_collected) || 0,
+                    total_fees: parseFloat(amountStats[0].total_fees) || 0
+                },
+                parcel_status: parcelStatusData,
+                payment_stats: {
+                    paid_count: parseInt(paymentStats[0].paid_count) || 0,
+                    pending_count: parseInt(paymentStats[0].pending_payment_count) || 0,
+                    processing_count: parseInt(paymentStats[0].processing_count) || 0,
+                    total_paid: parseFloat(paymentStats[0].total_paid) || 0
+                },
+                charts: {
+                    weekly_revenue: weeklyRevenue,
+                    weekly_parcels: weeklyParcels
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب إحصائيات Dashboard:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// الحصول على آخر الطرود
+exports.getRecentParcels = async (req, res) => {
+    try {
+        const merchantId = req.user.merchantId;
+        const limit = req.query.limit || 10;
+
+        const [parcels] = await db.query(`
+            SELECT 
+                p.*,
+                d.name as driver_name,
+                c.name as city_name
+            FROM parcels p
+            LEFT JOIN drivers dr ON p.driver_id = dr.id
+            LEFT JOIN users d ON dr.user_id = d.id
+            LEFT JOIN cities c ON p.customer_city = c.name
+            WHERE p.merchant_id = ?
+            ORDER BY p.created_at DESC
+            LIMIT ?
+        `, [merchantId, parseInt(limit)]);
+
+        res.status(200).json({
+            success: true,
+            data: parcels
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب الطرود:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// الحصول على الإحصائيات الشهرية
+exports.getMonthlyStats = async (req, res) => {
+    try {
+        const merchantId = req.user.merchantId;
+        const { year, month } = req.query;
+
+        const [stats] = await db.query(`
+            SELECT 
+                DAY(created_at) as day,
+                COUNT(*) as total_parcels,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(cod_amount) as revenue,
+                SUM(delivery_fee) as fees
+            FROM parcels
+            WHERE merchant_id = ?
+                AND YEAR(created_at) = ?
+                AND MONTH(created_at) = ?
+            GROUP BY DAY(created_at)
+            ORDER BY day ASC
+        `, [merchantId, year || new Date().getFullYear(), month || new Date().getMonth() + 1]);
+
+        res.status(200).json({
+            success: true,
+            data: stats
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب الإحصائيات الشهرية:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};

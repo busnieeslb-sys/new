@@ -1,0 +1,19 @@
+const express = require('express');
+const router = express.Router();
+const parcelController = require('../controllers/parcelController');
+const { protect, authorize } = require('../middleware/auth');
+
+// Route عام للتتبع (بدون مصادقة)
+router.get('/track/:tracking_number', parcelController.trackParcel);
+
+// Routes محمية للتاجر
+router.use(protect);
+router.use(authorize('merchant'));
+
+router.post('/', parcelController.createParcel);
+router.get('/', parcelController.getParcels);
+router.get('/:id', parcelController.getParcelById);
+router.put('/:id/status', parcelController.updateParcelStatus);
+router.delete('/:id', parcelController.cancelParcel);
+
+module.exports = router;

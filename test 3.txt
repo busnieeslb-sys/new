@@ -1,0 +1,193 @@
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const db = require('../config/database');
+
+// دالة لإنشاء JWT Token
+const generateToken = (user) => {
+    return jwt.sign(
+        { 
+            id: user.id, 
+            email: user.email, 
+            role: user.role,
+            merchantId: user.merchantId || null
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRE }
+    );
+};
+
+// تسجيل الدخول
+exports.login = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // التحقق من وجود البيانات
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'يرجى إدخال البريد الإلكتروني وكلمة المرور'
+            });
+        }
+
+        // البحث عن المستخدم
+        const [users] = await db.query(
+            'SELECT * FROM users WHERE email = ? AND status = "active"',
+            [email]
+        );
+
+        if (users.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: 'بيانات الدخول غير صحيحة'
+            });
+        }
+
+        const user = users[0];
+
+        // التحقق من كلمة المرور
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                success: false,
+                message: 'بيانات الدخول غير صحيحة'
+            });
+        }
+
+        // الحصول على معلومات إضافية للتاجر
+        let merchantId = null;
+        if (user.role === 'merchant') {
+            const [merchants] = await db.query(
+                'SELECT id FROM merchants WHERE user_id = ?',
+                [user.id]
+            );
+            if (merchants.length > 0) {
+                merchantId = merchants[0].id;
+            }
+        }
+
+        // إنشاء التوكن
+        const token = generateToken({ ...user, merchantId });
+
+        // إزالة كلمة المرور من النتيجة
+        delete user.password;
+
+        res.status(200).json({
+            success: true,
+            token,
+            user: {
+                ...user,
+                merchantId
+            }
+        });
+
+    } catch (error) {
+        console.error('خطأ في تسجيل الدخول:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// تسجيل تاجر جديد
+exports.registerMerchant = async (req, res) => {
+    try {
+        const {
+            name,
+            email,
+            phone,
+            password,
+            company_name,
+            store_name,
+            address,
+            city,
+            business_type
+        } = req.body;
+
+        // التحقق من وجود البريد الإلكتروني
+        const [existingUsers] = await db.query(
+            'SELECT id FROM users WHERE email = ?',
+            [email]
+        );
+
+        if (existingUsers.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'البريد الإلكتروني مستخدم بالفعل'
+            });
+        }
+
+        // تشفير كلمة المرور
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // بدء Transaction
+        const connection = await db.getConnection();
+        await connection.beginTransaction();
+
+        try {
+            // إنشاء المستخدم
+            const [userResult] = await connection.query(
+                'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, "merchant")',
+                [name, email, phone, hashedPassword]
+            );
+
+            const userId = userResult.insertId;
+
+            // إنشاء التاجر
+            await connection.query(
+                'INSERT INTO merchants (user_id, company_name, store_name, address, city, business_type) VALUES (?, ?, ?, ?, ?, ?)',
+                [userId, company_name, store_name, address, city, business_type]
+            );
+
+            await connection.commit();
+            connection.release();
+
+            res.status(201).json({
+                success: true,
+                message: 'تم إنشاء الحساب بنجاح'
+            });
+
+        } catch (error) {
+            await connection.rollback();
+            connection.release();
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('خطأ في التسجيل:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};
+
+// الحصول على بيانات المستخدم الحالي
+exports.getMe = async (req, res) => {
+    try {
+        const [users] = await db.query(
+            'SELECT id, name, email, phone, role, status FROM users WHERE id = ?',
+            [req.user.id]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'المستخدم غير موجود'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: users[0]
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب البيانات:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطأ في الخادم'
+        });
+    }
+};

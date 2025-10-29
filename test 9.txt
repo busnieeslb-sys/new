@@ -1,0 +1,331 @@
+import React, { useState, useEffect } from 'react';
+import { PieChart, Pie, Cell, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import './Dashboard.css';
+
+const Dashboard = () => {
+    const [stats, setStats] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetchDashboardData();
+    }, []);
+
+    const fetchDashboardData = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch('http://localhost:5000/api/dashboard/stats', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const data = await response.json();
+            if (data.success) {
+                setStats(data.data);
+            }
+        } catch (error) {
+            console.error('خطأ في جلب البيانات:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <div className="text-2xl">جاري التحميل...</div>
+            </div>
+        );
+    }
+
+    // بيانات حالة الطرود للرسم البياني الدائري
+    const parcelStatusData = stats ? [
+        { name: 'ملغي', value: stats.parcel_status.cancelled, color: '#EF4444', percentage: ((stats.parcel_status.cancelled / stats.overview.total_parcels) * 100).toFixed(1) },
+        { name: 'تم التوصيل', value: stats.parcel_status.delivered, color: '#10B981', percentage: ((stats.parcel_status.delivered / stats.overview.total_parcels) * 100).toFixed(1) },
+        { name: 'في الطريق', value: stats.parcel_status.in_transit, color: '#3B82F6', percentage: ((stats.parcel_status.in_transit / stats.overview.total_parcels) * 100).toFixed(1) },
+        { name: 'قيد الانتظار', value: stats.parcel_status.pending, percentage: ((stats.parcel_status.pending / stats.overview.total_parcels) * 100).toFixed(1) },
+        { name: 'مرتجع', value: stats.parcel_status.returned, color: '#1F2937', percentage: ((stats.parcel_status.returned / stats.overview.total_parcels) * 100).toFixed(1) },
+        { name: 'مؤكد', value: stats.parcel_status.out_for_delivery, color: '#EC4899', percentage: ((stats.parcel_status.out_for_delivery / stats.overview.total_parcels) * 100).toFixed(1) }
+    ] : [];
+
+    // بيانات إحصائيات الدفع
+    const paymentStatusData = stats ? [
+        { name: 'قيد الانتظار', value: stats.payment_stats.pending_count, color: '#F59E0B', percentage: 1.82 },
+        { name: 'طرود قيد الانتظار', value: stats.parcel_status.pending, color: '#FCD34D', percentage: 3.47 },
+        { name: 'طرود مفوترة', value: stats.payment_stats.paid_count, color: '#10B981', percentage: 94.72 }
+    ] : [];
+
+    return (
+        <div className="min-h-screen bg-gray-50" dir="rtl">
+            {/* Header */}
+            <header className="bg-white shadow-sm">
+                <div className="px-8 py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="text-2xl font-bold text-blue-600">📦 Sendit</div>
+                        <button className="p-2">☰</button>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <button className="p-2">🔔</button>
+                        <button className="p-2">🌐</button>
+                        <div className="flex items-center gap-2">
+                            <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white">
+                                A
+                            </div>
+                            <div>
+                                <div className="text-sm font-medium">aiteddine laabi</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <div className="flex">
+                {/* Sidebar */}
+                <aside className="w-64 bg-white min-h-screen shadow-sm">
+                    <nav className="p-4">
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 bg-blue-50 text-blue-600 rounded-lg mb-2">
+                            <span>📊</span>
+                            <span>Dashboard</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>➕</span>
+                            <span>Ajouter un colis</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>📦</span>
+                            <span>Liste des colis</span>
+                            <span className="mr-auto">›</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>🚚</span>
+                            <span>Demander un ramassage</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>📋</span>
+                            <span>Liste des ramassages</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span className="text-red-500">🎫</span>
+                            <span>Mes Tickets</span>
+                            <span className="mr-auto bg-red-500 text-white text-xs px-2 py-1 rounded-full">6</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>💰</span>
+                            <span>Facturation</span>
+                            <span className="mr-auto">›</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>↩️</span>
+                            <span>Demande des retours</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>📦</span>
+                            <span>Liste des retours</span>
+                            <span className="mr-auto">›</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>📦</span>
+                            <span>Gestion de stock</span>
+                            <span className="mr-auto">›</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>🏙️</span>
+                            <span>Liste des villes</span>
+                            <span className="mr-auto bg-blue-500 text-white text-xs px-2 py-1 rounded">Nouveau</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>👥</span>
+                            <span>Gestion d'équipe</span>
+                            <span className="mr-auto">›</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>❓</span>
+                            <span>Centre d'aide</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg mb-2">
+                            <span>🔧</span>
+                            <span>Intégration API</span>
+                        </a>
+                        <a href="#" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg">
+                            <span>💬</span>
+                            <span>Messages</span>
+                        </a>
+                    </nav>
+                </aside>
+
+                {/* Main Content */}
+                <main className="flex-1 p-8">
+                    <div className="mb-6">
+                        <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
+                        <button className="text-sm text-gray-600">⚙️ Filtres</button>
+                    </div>
+
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-4 gap-4 mb-8">
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="text-gray-500 text-sm mb-2">Total des colis / Livrés</div>
+                            <div className="text-3xl font-bold">
+                                {stats?.overview.total_parcels} <span className="text-gray-400 text-sm">Colis</span> / {stats?.overview.delivered_parcels} <span className="text-gray-400 text-sm">Colis</span>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="text-gray-500 text-sm mb-2">Total des ramassages</div>
+                            <div className="text-3xl font-bold">
+                                {stats?.overview.total_pickups} <span className="text-gray-400 text-sm">Ramassages</span>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="text-gray-500 text-sm mb-2">Montants encaissés</div>
+                            <div className="text-3xl font-bold text-green-600">
+                                {stats?.overview.total_collected.toLocaleString()} <span className="text-gray-400 text-sm">DH</span>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="text-gray-500 text-sm mb-2">Frais</div>
+                            <div className="text-3xl font-bold text-red-600">
+                                {stats?.overview.total_fees.toLocaleString()} <span className="text-gray-400 text-sm">DH</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Charts Row */}
+                    <div className="grid grid-cols-2 gap-8 mb-8">
+                        {/* Statuts des colis */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-xl font-semibold">Statuts des colis</h2>
+                                <button className="text-sm text-gray-500">Tous les statuts ▼</button>
+                            </div>
+                            <div className="flex items-center gap-8">
+                                <div className="w-64 h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={parcelStatusData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={60}
+                                                outerRadius={100}
+                                                paddingAngle={2}
+                                                dataKey="value"
+                                            >
+                                                {parcelStatusData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.color || '#6B7280'} />
+                                                ))}
+                                            </Pie>
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="flex-1">
+                                    <div className="space-y-3">
+                                        {parcelStatusData.map((item, index) => (
+                                            <div key={index} className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color || '#6B7280' }}></div>
+                                                    <span className="text-sm">{item.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-4">
+                                                    <span className="font-semibold">{item.value}</span>
+                                                    <span className="text-gray-500 text-sm">{item.percentage}%</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Statistiques de Paiement */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-xl font-semibold">Statistiques de Paiement</h2>
+                                <a href="#" className="text-sm text-blue-600">voir les paiements</a>
+                            </div>
+                            <div className="flex items-center gap-8">
+                                <div className="w-64 h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={paymentStatusData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={60}
+                                                outerRadius={100}
+                                                paddingAngle={2}
+                                                dataKey="value"
+                                            >
+                                                {paymentStatusData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Pie>
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="flex-1">
+                                    <div className="space-y-3">
+                                        {paymentStatusData.map((item, index) => (
+                                            <div key={index} className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color }}></div>
+                                                    <span className="text-sm">{item.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-4">
+                                                    <span className="font-semibold">{item.value}</span>
+                                                    <span className="text-gray-500 text-sm">{item.percentage}%</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Bottom Charts */}
+                    <div className="grid grid-cols-2 gap-8">
+                        {/* Chiffre d'affaire */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-xl font-semibold">Chiffre d'affaire</h2>
+                                <div className="flex gap-2">
+                                    <a href="#" className="text-sm text-blue-600">voir les colis</a>
+                                    <button className="text-sm text-gray-500">Hebdomadaire ▼</button>
+                                </div>
+                            </div>
+                            <ResponsiveContainer width="100%" height={250}>
+                                <BarChart data={stats?.charts.weekly_revenue || []}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="date" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Bar dataKey="revenue" fill="#10B981" radius={[8, 8, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* Total des colis */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-xl font-semibold">Total des colis</h2>
+                                <div className="flex gap-2">
+                                    <a href="#" className="text-sm text-blue-600">voir les colis</a>
+                                    <button className="text-sm text-gray-500">Hebdomadaire ▼</button>
+                                </div>
+                            </div>
+                            <ResponsiveContainer width="100%" height={250}>
+                                <AreaChart data={stats?.charts.weekly_parcels || []}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="date" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Area type="monotone" dataKey="count" stroke="#3B82F6" fill="#93C5FD" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    );
+};
+
+export default Dashboard;
